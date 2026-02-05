@@ -1,0 +1,20 @@
+[Unit]
+Description=YClients Telegram Integration
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/yclients-telegram
+ExecStart=/opt/yclients-telegram/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/yclients-telegram.log
+StandardError=append:/var/log/yclients-telegram.log
+
+# Переменные окружения (опционально)
+# EnvironmentFile=/opt/yclients-telegram/.env
+
+[Install]
+WantedBy=multi-user.target
+

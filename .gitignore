@@ -1,0 +1,41 @@
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Сессии Telegram (ВАЖНО - не загружать!)
+*.session
+*.session-journal
+
+# Конфиги с секретами
+.env
+
+# База данных
+data/*.db
+data/*.db-journal
+
+# Логи
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+*.tmp
+*.temp
+*.zip
+
