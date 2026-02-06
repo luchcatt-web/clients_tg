@@ -19,6 +19,21 @@ from templates import msg_booking_created, msg_booking_changed, msg_booking_canc
 app = FastAPI(title="YClients Telegram Integration", version="1.0.0")
 
 
+# === Инициализация Telegram при старте ===
+@app.on_event("startup")
+async def startup_event():
+    """Запуск Telegram клиента при старте сервера"""
+    await db.init()
+    await telegram.start()
+    print("✅ Telegram клиент запущен!")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Остановка Telegram клиента"""
+    await telegram.stop()
+
+
 def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
     """Проверка подписи webhook"""
     if not secret:
@@ -126,7 +141,18 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     if status == "create":
         print(f"📝 Новая запись #{record_id}: {client_name}")
         
+        # Проверяем, есть ли клиент в боте
+        from bot_checker import bot_checker
+        if await bot_checker.is_client_in_bot(client_phone):
+            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
+            return
+        
         text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
+        
+        # Добавляем ссылку на бота
+        if config.BOT_USERNAME:
+            text += f"\n\n🤖 Для управления записями подключите бота: @{config.BOT_USERNAME}"
+        
         await telegram.send_message(
             phone_or_user_id=client_phone,
             text=text,
@@ -137,6 +163,12 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     # === ЗАПИСЬ ОТМЕНЕНА ===
     elif status == "delete" or record.get("deleted"):
         print(f"❌ Запись #{record_id} отменена: {client_name}")
+        
+        # Проверяем, есть ли клиент в боте
+        from bot_checker import bot_checker
+        if await bot_checker.is_client_in_bot(client_phone):
+            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
+            return
         
         text = msg_booking_cancelled(client_name, service_name, record_datetime)
         await telegram.send_message(
@@ -149,6 +181,12 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     # === ЗАПИСЬ ИЗМЕНЕНА ===
     elif status == "update":
         print(f"📝 Запись #{record_id} изменена: {client_name}")
+        
+        # Проверяем, есть ли клиент в боте
+        from bot_checker import bot_checker
+        if await bot_checker.is_client_in_bot(client_phone):
+            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
+            return
         
         text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
         await telegram.send_message(
