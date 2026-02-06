@@ -146,13 +146,7 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     
     # === НОВАЯ ЗАПИСЬ ===
     if status == "create":
-        print(f"📝 Новая запись #{record_id}: {client_name}")
-        
-        # Проверяем, есть ли клиент в боте
-        from bot_checker import bot_checker
-        if await bot_checker.is_client_in_bot(client_phone):
-            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
-            return
+        print(f"📝 Новая запись #{record_id}: {client_name}, тел: {client_phone}")
         
         text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
         
@@ -160,48 +154,44 @@ async def handle_record_event(status: str, record_id: int, data: dict):
         if config.BOT_USERNAME:
             text += f"\n\n🤖 Для управления записями подключите бота: @{config.BOT_USERNAME}"
         
-        await telegram.send_message(
+        result = await telegram.send_message(
             phone_or_user_id=client_phone,
             text=text,
             record_id=record_id,
             yclients_client_id=client_id
         )
+        if result:
+            print(f"✅ Сообщение отправлено клиенту {client_phone}")
+        else:
+            print(f"⚠️ Не удалось отправить сообщение клиенту {client_phone}")
     
     # === ЗАПИСЬ ОТМЕНЕНА ===
     elif status == "delete" or record.get("deleted"):
-        print(f"❌ Запись #{record_id} отменена: {client_name}")
-        
-        # Проверяем, есть ли клиент в боте
-        from bot_checker import bot_checker
-        if await bot_checker.is_client_in_bot(client_phone):
-            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
-            return
+        print(f"❌ Запись #{record_id} отменена: {client_name}, тел: {client_phone}")
         
         text = msg_booking_cancelled(client_name, service_name, record_datetime)
-        await telegram.send_message(
+        result = await telegram.send_message(
             phone_or_user_id=client_phone,
             text=text,
             record_id=record_id,
             yclients_client_id=client_id
         )
+        if result:
+            print(f"✅ Сообщение об отмене отправлено")
     
     # === ЗАПИСЬ ИЗМЕНЕНА ===
     elif status == "update":
-        print(f"📝 Запись #{record_id} изменена: {client_name}")
-        
-        # Проверяем, есть ли клиент в боте
-        from bot_checker import bot_checker
-        if await bot_checker.is_client_in_bot(client_phone):
-            print(f"🤖 Клиент {client_phone} в боте, пропускаем userbot")
-            return
+        print(f"📝 Запись #{record_id} изменена: {client_name}, тел: {client_phone}")
         
         text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
-        await telegram.send_message(
+        result = await telegram.send_message(
             phone_or_user_id=client_phone,
             text=text,
             record_id=record_id,
             yclients_client_id=client_id
         )
+        if result:
+            print(f"✅ Сообщение об изменении отправлено")
 
 
 async def handle_client_event(status: str, client_id: int, data: dict):
