@@ -153,25 +153,17 @@ async def main():
     print("   - За 1 час до визита — напоминание")
     print("\nДля остановки нажмите Ctrl+C\n")
     
-    # Запуск webhook сервера
-    import uvicorn
-    from webhook_server import app
-    
-    server_config = uvicorn.Config(
-        app,
-        host=config.WEBHOOK_HOST,
-        port=config.WEBHOOK_PORT,
-        log_level="warning"
-    )
-    server = uvicorn.Server(server_config)
-    
+    # Бесконечный цикл работы
     try:
-        await server.serve()
+        # Ждём пока не будет сигнала остановки
+        while True:
+            await asyncio.sleep(60)
     except KeyboardInterrupt:
         pass
     finally:
         print("\n🛑 Завершение работы...")
         reminder_scheduler.stop()
+        await telegram.stop()
         print("👋 До свидания!")
 
 
