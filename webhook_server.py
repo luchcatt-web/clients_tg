@@ -98,7 +98,7 @@ async def handle_record_event(status: str, record_id: int, data: dict):
         record = data
     
     # Извлекаем информацию
-    client_data = record.get("client", {})
+    client_data = record.get("client") or {}
     client_name = client_data.get("name", "").split()[0] if client_data.get("name") else "Клиент"
     client_phone = client_data.get("phone", "")
     client_id = client_data.get("id")

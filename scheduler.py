@@ -63,7 +63,7 @@ class ReminderScheduler:
                 current_record_ids.add(record_id)
                 
                 # Получаем данные записи
-                client_data = record.get("client", {})
+                client_data = record.get("client") or {}
                 client_name = client_data.get("name", "").split()[0] if client_data.get("name") else "Клиент"
                 client_phone = client_data.get("phone", "")
                 client_id = client_data.get("id")
@@ -209,7 +209,7 @@ class ReminderScheduler:
         minutes_until = record.get("minutes_until", 0)
         
         # Получаем данные для напоминания
-        client_data = record.get("client", {})
+        client_data = record.get("client") or {}
         client_name = client_data.get("name", "").split()[0] if client_data.get("name") else "Клиент"
         client_phone = client_data.get("phone", "")
         client_id = client_data.get("id")
@@ -306,7 +306,7 @@ class ReminderScheduler:
                 
                 if 1 <= hours_ago <= 3:
                     if not await db.is_reminder_sent(record_id, "review"):
-                        client_data = record.get("client", {})
+                        client_data = record.get("client") or {}
                         client_name = client_data.get("name", "").split()[0] if client_data.get("name") else "Клиент"
                         client_phone = client_data.get("phone", "")
                         client_id = client_data.get("id")
