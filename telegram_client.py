@@ -90,10 +90,19 @@ class TelegramClient:
                         }
             
             # Если не нашли в контактах, пробуем импортировать
-            result = await self.app.import_contacts([{
-                "phone": normalized,
-                "first_name": "Client"
-            }])
+            from pyrogram.raw.functions.contacts import ImportContacts
+            from pyrogram.raw.types import InputPhoneContact
+            
+            result = await self.app.invoke(
+                ImportContacts(
+                    contacts=[InputPhoneContact(
+                        client_id=0,
+                        phone=normalized,
+                        first_name="Client",
+                        last_name=""
+                    )]
+                )
+            )
             
             if result.users:
                 user = result.users[0]
