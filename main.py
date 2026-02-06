@@ -13,6 +13,7 @@ from database import db
 from telegram_client import telegram
 from scheduler import reminder_scheduler
 from yclients_api import yclients
+from yclients_chat import yclients_chat  # Интеграция с чатом YClients
 from templates import msg_confirmed
 from datetime import datetime
 
@@ -84,8 +85,31 @@ async def handle_incoming_message(message):
             telegram_message_id=message.id
         )
         
-        print(f"💬 Сообщение от клиента #{client_link['yclients_client_id']}: {text[:50]}...")
+        # === Отправляем сообщение в чат YClients ===
+        phone = client_link.get("phone", "")
+        client_name = message.from_user.first_name or "Клиент"
+        if phone:
+            await yclients_chat.send_message_to_yclients(
+                phone=phone,
+                message=text,
+                name=client_name
+            )
+            print(f"💬 Сообщение от клиента #{client_link['yclients_client_id']} отправлено в YClients: {text[:50]}...")
+        else:
+            print(f"💬 Сообщение от клиента #{client_link['yclients_client_id']}: {text[:50]}...")
     else:
+        # Для неизвестных пользователей пробуем получить телефон
+        user_phone = None
+        if message.contact:
+            user_phone = message.contact.phone_number
+        
+        if user_phone:
+            await yclients_chat.send_message_to_yclients(
+                phone=user_phone,
+                message=text,
+                name=message.from_user.first_name
+            )
+        
         print(f"💬 Сообщение от неизвестного пользователя {user_id}: {text[:50]}...")
 
 

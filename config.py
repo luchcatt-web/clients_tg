@@ -18,6 +18,7 @@ class Config:
     YCLIENTS_PARTNER_TOKEN = os.getenv("YCLIENTS_PARTNER_TOKEN", "")
     YCLIENTS_USER_TOKEN = os.getenv("YCLIENTS_USER_TOKEN", "")
     YCLIENTS_COMPANY_ID = int(os.getenv("YCLIENTS_COMPANY_ID", 0))
+    YCLIENTS_APP_ID = int(os.getenv("YCLIENTS_APP_ID", 36592))  # Application ID для чата
     YCLIENTS_API_URL = "https://api.yclients.com/api/v1"
     
     # Webhook
