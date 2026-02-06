@@ -93,13 +93,20 @@ async def process_webhook(data: dict):
     resource_id = data.get("resource_id")
     payload = data.get("data", {})
     
+    print(f"🔍 Обработка: resource={resource}, status={status}, id={resource_id}")
+    print(f"📋 Payload: {payload}")
+    
     try:
-        if resource == "records":
+        if resource == "record":  # Исправлено: "record" вместо "records"
             await handle_record_event(status, resource_id, payload)
-        elif resource == "clients":
+        elif resource == "client":  # Исправлено: "client" вместо "clients"
             await handle_client_event(status, resource_id, payload)
+        else:
+            print(f"⚠️ Неизвестный resource: {resource}")
     except Exception as e:
+        import traceback
         print(f"❌ Ошибка обработки webhook: {e}")
+        traceback.print_exc()
 
 
 async def handle_record_event(status: str, record_id: int, data: dict):
