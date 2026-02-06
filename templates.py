@@ -39,26 +39,13 @@ def msg_booking_created(client_name: str, service: str, staff: str, dt: datetime
     date_str = format_date(dt)
     time_str = format_time(dt)
     
-    templates = [
-        f"""👋 {client_name}, вы записаны в 💇 МЕСТО на услугу
+    return f"""👋 {client_name}, вы записаны в 💇 МЕСТО на услугу
 
 📅 {date_str} в {time_str}
 💇 {service}
 👤 Мастер: {staff}
 
-Ждём вас! Если планы изменятся — напишите нам 💬""",
-
-        f"""✅ {client_name}, запись подтверждена!
-
-💇 МЕСТО ждёт вас:
-📅 {date_str}
-⏰ {time_str}
-✨ {service}
-👤 {staff}
-
-До встречи! 🌟"""
-    ]
-    return random.choice(templates)
+Ждём вас! Если планы изменятся — напишите нам 💬"""
 
 
 def msg_confirmation_24h(client_name: str, service: str, staff: str, dt: datetime) -> str:

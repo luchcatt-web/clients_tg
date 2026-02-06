@@ -4,8 +4,7 @@ Webhook сервер для получения событий из YClients
 """
 import hashlib
 import hmac
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
@@ -137,9 +136,7 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     staff = record.get("staff", {})
     staff_name = staff.get("name", "Мастер")
     
-    # Парсим дату - YClients возвращает время в UTC, конвертируем в Москву
-    MOSCOW_TZ = pytz.timezone('Europe/Moscow')
-    
+    # Парсим дату - YClients возвращает время уже в локальном часовом поясе салона
     date_str = record.get("date", "")
     datetime_field = record.get("datetime", "")
     
@@ -152,20 +149,16 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     print(f"📅 Парсинг даты: date={date_str}, datetime={datetime_field}, time_str={time_str}")
     
     try:
-        # Парсим как UTC и конвертируем в Москву
-        record_datetime_utc = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
-        record_datetime_utc = pytz.utc.localize(record_datetime_utc)
-        record_datetime = record_datetime_utc.astimezone(MOSCOW_TZ).replace(tzinfo=None)
-        print(f"📅 Время записи (Москва): {record_datetime}")
+        # YClients уже возвращает время в локальном часовом поясе — НЕ конвертируем
+        record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+        print(f"📅 Время записи: {record_datetime}")
     except ValueError:
         try:
             # Попробуем без секунд
-            record_datetime_utc = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-            record_datetime_utc = pytz.utc.localize(record_datetime_utc)
-            record_datetime = record_datetime_utc.astimezone(MOSCOW_TZ).replace(tzinfo=None)
-            print(f"📅 Время записи (Москва): {record_datetime}")
+            record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            print(f"📅 Время записи: {record_datetime}")
         except ValueError:
-            record_datetime = datetime.now(MOSCOW_TZ).replace(tzinfo=None)
+            record_datetime = datetime.now()
             print(f"⚠️ Не удалось распарсить дату, используем текущее время")
     
     # === НОВАЯ ЗАПИСЬ ===
