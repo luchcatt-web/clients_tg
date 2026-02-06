@@ -25,6 +25,16 @@ class Config:
     WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", 8000))
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
     
+    # Telegram Bot (для клиентов которые подключили бота)
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+    BOT_USERNAME = os.getenv("BOT_USERNAME", "Mesto_yclients_bot")
+    
+    # S3 для проверки БД бота
+    S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "")
+    S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "")
+    S3_BUCKET = os.getenv("S3_BUCKET", "")
+    S3_ENDPOINT = os.getenv("S3_ENDPOINT", "https://s3.twcstorage.ru")
+    
     # Напоминания (в минутах)
     REMINDER_BEFORE_24H = int(os.getenv("REMINDER_BEFORE_24H", 1440))  # 24 часа
     REMINDER_BEFORE_2H = int(os.getenv("REMINDER_BEFORE_2H", 120))     # 2 часа

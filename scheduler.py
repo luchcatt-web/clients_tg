@@ -18,6 +18,7 @@ from templates import (
     msg_lost_client_21, msg_lost_client_35, msg_lost_client_65,
     msg_booking_created, msg_booking_changed, msg_booking_cancelled
 )
+from bot_checker import get_bot_client_chat_id, get_bot_link_text
 
 
 class ReminderScheduler:
@@ -25,6 +26,18 @@ class ReminderScheduler:
         self.scheduler = AsyncIOScheduler()
         self.is_running = False
         self.first_poll = True  # Первый запуск — не отправляем уведомления о старых записях
+    
+    async def _should_send_via_userbot(self, phone: str) -> bool:
+        """
+        Проверяет, нужно ли отправлять через userbot.
+        Если клиент подключил бота - бот сам отправит, мы пропускаем.
+        Если клиент НЕ в боте - отправляем через userbot.
+        """
+        bot_chat_id = await get_bot_client_chat_id(phone)
+        if bot_chat_id:
+            print(f"   ℹ️ Клиент {phone} подключил бота - уведомление отправит бот")
+            return False
+        return True
     
     def _make_record_hash(self, record: dict) -> str:
         """Создать хеш записи для определения изменений"""
@@ -108,14 +121,17 @@ class ReminderScheduler:
                     
                     # Отправляем уведомление (кроме первого запуска)
                     if not self.first_poll:
-                        print(f"📤 Отправляем уведомление о новой записи: {client_name}")
-                        text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
-                        await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text,
-                            record_id=record_id,
-                            yclients_client_id=client_id
-                        )
+                        # Проверяем, нужно ли отправлять через userbot
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Отправляем уведомление о новой записи: {client_name}")
+                            text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
+                            text += get_bot_link_text()  # Добавляем ссылку на бота
+                            await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text,
+                                record_id=record_id,
+                                yclients_client_id=client_id
+                            )
                 
                 elif known.get("hash") != record_hash and known.get("status") == "active":
                     # ЗАПИСЬ ИЗМЕНЕНА
@@ -134,14 +150,16 @@ class ReminderScheduler:
                     )
                     
                     # Отправляем уведомление об изменении
-                    print(f"📤 Отправляем уведомление об изменении: {client_name}")
-                    text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
-                    await telegram.send_message(
-                        phone_or_user_id=client_phone,
-                        text=text,
-                        record_id=record_id,
-                        yclients_client_id=client_id
-                    )
+                    if await self._should_send_via_userbot(client_phone):
+                        print(f"📤 Отправляем уведомление об изменении: {client_name}")
+                        text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
+                        text += get_bot_link_text()
+                        await telegram.send_message(
+                            phone_or_user_id=client_phone,
+                            text=text,
+                            record_id=record_id,
+                            yclients_client_id=client_id
+                        )
             
             # Проверяем УДАЛЁННЫЕ записи
             known_ids = await db.get_all_active_record_ids()
@@ -166,16 +184,17 @@ class ReminderScheduler:
                         except ValueError:
                             record_datetime = datetime.now()
                         
-                        print(f"📤 Отправляем уведомление об отмене: {known.get('client_name')}")
-                        text = msg_booking_cancelled(
-                            known.get("client_name", "Клиент"),
-                            known.get("service_name", "Услуга"),
-                            record_datetime
-                        )
-                        await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text
-                        )
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Отправляем уведомление об отмене: {known.get('client_name')}")
+                            text = msg_booking_cancelled(
+                                known.get("client_name", "Клиент"),
+                                known.get("service_name", "Услуга"),
+                                record_datetime
+                            )
+                            await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text
+                            )
             
             # После первого запуска — отправляем уведомления
             if self.first_poll:
@@ -230,47 +249,56 @@ class ReminderScheduler:
         # === Подтверждение записи за 24 часа ===
         if 1380 <= minutes_until <= 1500:  # 23-25 часов
             if not await db.is_reminder_sent(record_id, "24h"):
-                print(f"📤 Отправляем запрос подтверждения: {client_name}")
-                
-                text = msg_confirmation_24h(client_name, service_name, staff_name, record_datetime)
-                message = await telegram.send_message(
-                    phone_or_user_id=client_phone,
-                    text=text,
-                    record_id=record_id,
-                    yclients_client_id=client_id
-                )
-                
-                if message:
-                    await db.mark_reminder_sent(record_id, "24h", message.id)
+                if await self._should_send_via_userbot(client_phone):
+                    print(f"📤 Отправляем запрос подтверждения: {client_name}")
                     
-                    # Сохраняем ожидание подтверждения
-                    user_info = await telegram.find_user_by_phone(client_phone)
-                    if user_info:
-                        await db.add_pending_confirmation(
-                            record_id=record_id,
-                            telegram_user_id=user_info["user_id"],
-                            yclients_client_id=client_id,
-                            record_datetime=record_datetime.isoformat()
-                        )
+                    text = msg_confirmation_24h(client_name, service_name, staff_name, record_datetime)
+                    text += get_bot_link_text()
+                    message = await telegram.send_message(
+                        phone_or_user_id=client_phone,
+                        text=text,
+                        record_id=record_id,
+                        yclients_client_id=client_id
+                    )
                     
-                    print(f"✅ Запрос подтверждения отправлен: {client_name}")
+                    if message:
+                        await db.mark_reminder_sent(record_id, "24h", message.id)
+                        
+                        # Сохраняем ожидание подтверждения
+                        user_info = await telegram.find_user_by_phone(client_phone)
+                        if user_info:
+                            await db.add_pending_confirmation(
+                                record_id=record_id,
+                                telegram_user_id=user_info["user_id"],
+                                yclients_client_id=client_id,
+                                record_datetime=record_datetime.isoformat()
+                            )
+                        
+                        print(f"✅ Запрос подтверждения отправлен: {client_name}")
+                else:
+                    # Клиент в боте, отмечаем как отправленное
+                    await db.mark_reminder_sent(record_id, "24h", 0)
         
         # === Напоминание за 1 час ===
         if 45 <= minutes_until <= 75:  # 45-75 минут
             if not await db.is_reminder_sent(record_id, "1h"):
-                print(f"📤 Отправляем напоминание за 1ч: {client_name}")
-                
-                text = msg_reminder_1h(client_name, service_name, staff_name, record_datetime)
-                message = await telegram.send_message(
-                    phone_or_user_id=client_phone,
-                    text=text,
-                    record_id=record_id,
-                    yclients_client_id=client_id
-                )
-                
-                if message:
-                    await db.mark_reminder_sent(record_id, "1h", message.id)
-                    print(f"✅ Напоминание за 1ч отправлено: {client_name}")
+                if await self._should_send_via_userbot(client_phone):
+                    print(f"📤 Отправляем напоминание за 1ч: {client_name}")
+                    
+                    text = msg_reminder_1h(client_name, service_name, staff_name, record_datetime)
+                    text += get_bot_link_text()
+                    message = await telegram.send_message(
+                        phone_or_user_id=client_phone,
+                        text=text,
+                        record_id=record_id,
+                        yclients_client_id=client_id
+                    )
+                    
+                    if message:
+                        await db.mark_reminder_sent(record_id, "1h", message.id)
+                        print(f"✅ Напоминание за 1ч отправлено: {client_name}")
+                else:
+                    await db.mark_reminder_sent(record_id, "1h", 0)
     
     async def check_completed_visits(self):
         """Проверка завершённых визитов для запроса отзыва"""
@@ -319,19 +347,23 @@ class ReminderScheduler:
                         staff = record.get("staff", {})
                         staff_name = staff.get("name", "Мастер")
                         
-                        print(f"📤 Отправляем запрос отзыва: {client_name}")
-                        
-                        text = msg_review_request(client_name, service_name, staff_name)
-                        message = await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text,
-                            record_id=record_id,
-                            yclients_client_id=client_id
-                        )
-                        
-                        if message:
-                            await db.mark_reminder_sent(record_id, "review", message.id)
-                            print(f"✅ Запрос отзыва отправлен: {client_name}")
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Отправляем запрос отзыва: {client_name}")
+                            
+                            text = msg_review_request(client_name, service_name, staff_name)
+                            text += get_bot_link_text()
+                            message = await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text,
+                                record_id=record_id,
+                                yclients_client_id=client_id
+                            )
+                            
+                            if message:
+                                await db.mark_reminder_sent(record_id, "review", message.id)
+                                print(f"✅ Запрос отзыва отправлен: {client_name}")
+                        else:
+                            await db.mark_reminder_sent(record_id, "review", 0)
                             
         except Exception as e:
             print(f"❌ Ошибка при проверке завершённых визитов: {e}")
@@ -370,49 +402,61 @@ class ReminderScheduler:
                 if 20 <= days_since <= 22:
                     reminder_key = f"lost21_{client_id}"
                     if not await db.is_reminder_sent(client_id, reminder_key):
-                        print(f"📤 Потеряшка 21 день: {client_name}")
-                        
-                        text = msg_lost_client_21(client_name)
-                        message = await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text,
-                            yclients_client_id=client_id
-                        )
-                        
-                        if message:
-                            await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Потеряшка 21 день: {client_name}")
+                            
+                            text = msg_lost_client_21(client_name)
+                            text += get_bot_link_text()
+                            message = await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text,
+                                yclients_client_id=client_id
+                            )
+                            
+                            if message:
+                                await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        else:
+                            await db.mark_reminder_sent(client_id, reminder_key, 0)
                 
                 # Потеряшки 35 дней (34-36 дней)
                 elif 34 <= days_since <= 36:
                     reminder_key = f"lost35_{client_id}"
                     if not await db.is_reminder_sent(client_id, reminder_key):
-                        print(f"📤 Потеряшка 35 дней: {client_name}")
-                        
-                        text = msg_lost_client_35(client_name)
-                        message = await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text,
-                            yclients_client_id=client_id
-                        )
-                        
-                        if message:
-                            await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Потеряшка 35 дней: {client_name}")
+                            
+                            text = msg_lost_client_35(client_name)
+                            text += get_bot_link_text()
+                            message = await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text,
+                                yclients_client_id=client_id
+                            )
+                            
+                            if message:
+                                await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        else:
+                            await db.mark_reminder_sent(client_id, reminder_key, 0)
                 
                 # Потеряшки 65 дней (64-66 дней)
                 elif 64 <= days_since <= 66:
                     reminder_key = f"lost65_{client_id}"
                     if not await db.is_reminder_sent(client_id, reminder_key):
-                        print(f"📤 Потеряшка 65 дней: {client_name}")
-                        
-                        text = msg_lost_client_65(client_name)
-                        message = await telegram.send_message(
-                            phone_or_user_id=client_phone,
-                            text=text,
-                            yclients_client_id=client_id
-                        )
-                        
-                        if message:
-                            await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        if await self._should_send_via_userbot(client_phone):
+                            print(f"📤 Потеряшка 65 дней: {client_name}")
+                            
+                            text = msg_lost_client_65(client_name)
+                            text += get_bot_link_text()
+                            message = await telegram.send_message(
+                                phone_or_user_id=client_phone,
+                                text=text,
+                                yclients_client_id=client_id
+                            )
+                            
+                            if message:
+                                await db.mark_reminder_sent(client_id, reminder_key, message.id)
+                        else:
+                            await db.mark_reminder_sent(client_id, reminder_key, 0)
                             
         except Exception as e:
             print(f"❌ Ошибка при проверке потерянных клиентов: {e}")
