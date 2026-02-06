@@ -136,30 +136,28 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     staff = record.get("staff", {})
     staff_name = staff.get("name", "Мастер")
     
-    # Парсим дату - YClients возвращает время уже в локальном часовом поясе салона
-    date_str = record.get("date", "")
+    # Парсим дату - YClients возвращает datetime в ISO формате: 2026-02-06T22:15:00+03:00
     datetime_field = record.get("datetime", "")
     
-    # YClients может возвращать datetime в формате "YYYY-MM-DD HH:MM:SS" или просто "HH:MM:SS"
-    if datetime_field and " " in str(datetime_field):
-        time_str = str(datetime_field).split(" ")[-1]
-    else:
-        time_str = str(datetime_field) if datetime_field else "00:00:00"
-    
-    print(f"📅 Парсинг даты: date={date_str}, datetime={datetime_field}, time_str={time_str}")
+    print(f"📅 Парсинг даты: datetime={datetime_field}")
     
     try:
-        # YClients уже возвращает время в локальном часовом поясе — НЕ конвертируем
-        record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
-        print(f"📅 Время записи: {record_datetime}")
-    except ValueError:
-        try:
-            # Попробуем без секунд
-            record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        # ISO формат с часовым поясом: 2026-02-06T22:15:00+03:00
+        if "T" in str(datetime_field):
+            # Убираем часовой пояс и парсим
+            dt_str = str(datetime_field).split("+")[0].split("-03:00")[0].split("-00:00")[0]
+            record_datetime = datetime.fromisoformat(dt_str)
+            print(f"📅 Время записи (ISO): {record_datetime}")
+        else:
+            # Старый формат: YYYY-MM-DD HH:MM:SS
+            date_str = record.get("date", "")
+            time_str = str(datetime_field).split(" ")[-1] if datetime_field else "00:00:00"
+            record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
             print(f"📅 Время записи: {record_datetime}")
-        except ValueError:
-            record_datetime = datetime.now()
-            print(f"⚠️ Не удалось распарсить дату, используем текущее время")
+    except Exception as e:
+        print(f"⚠️ Ошибка парсинга даты: {e}")
+        record_datetime = datetime.now()
+        print(f"⚠️ Используем текущее время: {record_datetime}")
     
     # === НОВАЯ ЗАПИСЬ ===
     if status == "create":
