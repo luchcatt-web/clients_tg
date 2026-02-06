@@ -422,10 +422,10 @@ class ReminderScheduler:
         if self.is_running:
             return
         
-        # POLLING: Проверяем записи каждые 2 минуты (замена webhook)
+        # POLLING: Проверяем записи каждые 60 секунд (замена webhook)
         self.scheduler.add_job(
             self.poll_records,
-            trigger=IntervalTrigger(minutes=2),
+            trigger=IntervalTrigger(seconds=60),
             id="poll_records",
             name="Polling записей",
             replace_existing=True
