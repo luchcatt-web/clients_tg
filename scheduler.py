@@ -1,8 +1,10 @@
 """
 Планировщик напоминаний
 Периодически проверяет записи и отправляет напоминания
+С поддержкой POLLING для отслеживания новых/изменённых/удалённых записей
 """
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -13,7 +15,8 @@ from yclients_api import yclients
 from telegram_client import telegram
 from templates import (
     msg_confirmation_24h, msg_reminder_1h, msg_review_request,
-    msg_lost_client_21, msg_lost_client_35, msg_lost_client_65
+    msg_lost_client_21, msg_lost_client_35, msg_lost_client_65,
+    msg_booking_created, msg_booking_changed, msg_booking_cancelled
 )
 
 
@@ -21,6 +24,168 @@ class ReminderScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self.is_running = False
+        self.first_poll = True  # Первый запуск — не отправляем уведомления о старых записях
+    
+    def _make_record_hash(self, record: dict) -> str:
+        """Создать хеш записи для определения изменений"""
+        data = f"{record.get('date')}|{record.get('datetime')}|{record.get('staff', {}).get('id')}|{record.get('services', [])}"
+        return hashlib.md5(data.encode()).hexdigest()
+    
+    async def poll_records(self):
+        """
+        POLLING: Проверка новых/изменённых/удалённых записей через API
+        Заменяет webhook
+        """
+        print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Polling записей...")
+        
+        try:
+            # Инициализируем таблицу если нужно
+            await db.init_records_tracking()
+            
+            # Получаем записи на ближайшие 14 дней
+            start_date = datetime.now()
+            end_date = start_date + timedelta(days=14)
+            
+            result = await yclients.get_records(start_date, end_date)
+            
+            if not result.get("success"):
+                print(f"❌ Ошибка получения записей: {result}")
+                return
+            
+            current_records = result.get("data", [])
+            current_record_ids = set()
+            
+            for record in current_records:
+                if record.get("deleted"):
+                    continue
+                    
+                record_id = record.get("id")
+                current_record_ids.add(record_id)
+                
+                # Получаем данные записи
+                client_data = record.get("client", {})
+                client_name = client_data.get("name", "").split()[0] if client_data.get("name") else "Клиент"
+                client_phone = client_data.get("phone", "")
+                client_id = client_data.get("id")
+                
+                if not client_phone:
+                    continue
+                
+                services = record.get("services", [])
+                service_name = ", ".join([s.get("title", "") for s in services]) or "Услуга"
+                staff = record.get("staff", {})
+                staff_name = staff.get("name", "Мастер")
+                
+                record_date = record.get("date", "")
+                record_time = record.get("datetime", "").split(" ")[-1] if record.get("datetime") else ""
+                
+                record_hash = self._make_record_hash(record)
+                
+                # Парсим дату для шаблона
+                try:
+                    record_datetime = datetime.strptime(f"{record_date} {record_time}", "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    record_datetime = datetime.now()
+                
+                # Проверяем, знаем ли мы эту запись
+                known = await db.get_known_record(record_id)
+                
+                if known is None:
+                    # НОВАЯ ЗАПИСЬ
+                    print(f"📌 Новая запись: {client_name} ({record_id})")
+                    
+                    # Сохраняем
+                    await db.save_known_record(
+                        record_id=record_id,
+                        client_phone=client_phone,
+                        client_name=client_name,
+                        service_name=service_name,
+                        staff_name=staff_name,
+                        record_date=record_date,
+                        record_time=record_time,
+                        record_hash=record_hash
+                    )
+                    
+                    # Отправляем уведомление (кроме первого запуска)
+                    if not self.first_poll:
+                        print(f"📤 Отправляем уведомление о новой записи: {client_name}")
+                        text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
+                        await telegram.send_message(
+                            phone_or_user_id=client_phone,
+                            text=text,
+                            record_id=record_id,
+                            yclients_client_id=client_id
+                        )
+                
+                elif known.get("hash") != record_hash and known.get("status") == "active":
+                    # ЗАПИСЬ ИЗМЕНЕНА
+                    print(f"✏️ Запись изменена: {client_name} ({record_id})")
+                    
+                    # Обновляем
+                    await db.save_known_record(
+                        record_id=record_id,
+                        client_phone=client_phone,
+                        client_name=client_name,
+                        service_name=service_name,
+                        staff_name=staff_name,
+                        record_date=record_date,
+                        record_time=record_time,
+                        record_hash=record_hash
+                    )
+                    
+                    # Отправляем уведомление об изменении
+                    print(f"📤 Отправляем уведомление об изменении: {client_name}")
+                    text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
+                    await telegram.send_message(
+                        phone_or_user_id=client_phone,
+                        text=text,
+                        record_id=record_id,
+                        yclients_client_id=client_id
+                    )
+            
+            # Проверяем УДАЛЁННЫЕ записи
+            known_ids = await db.get_all_active_record_ids()
+            deleted_ids = known_ids - current_record_ids
+            
+            for deleted_id in deleted_ids:
+                known = await db.get_known_record(deleted_id)
+                if known and known.get("status") == "active":
+                    print(f"🗑️ Запись удалена: {known.get('client_name')} ({deleted_id})")
+                    
+                    # Отмечаем как удалённую
+                    await db.mark_record_deleted(deleted_id)
+                    
+                    # Отправляем уведомление об отмене
+                    client_phone = known.get("client_phone")
+                    if client_phone:
+                        try:
+                            record_datetime = datetime.strptime(
+                                f"{known.get('record_date')} {known.get('record_time')}", 
+                                "%Y-%m-%d %H:%M:%S"
+                            )
+                        except ValueError:
+                            record_datetime = datetime.now()
+                        
+                        print(f"📤 Отправляем уведомление об отмене: {known.get('client_name')}")
+                        text = msg_booking_cancelled(
+                            known.get("client_name", "Клиент"),
+                            known.get("service_name", "Услуга"),
+                            record_datetime
+                        )
+                        await telegram.send_message(
+                            phone_or_user_id=client_phone,
+                            text=text
+                        )
+            
+            # После первого запуска — отправляем уведомления
+            if self.first_poll:
+                self.first_poll = False
+                print(f"✅ Первичная синхронизация завершена. Найдено {len(current_record_ids)} записей.")
+            
+        except Exception as e:
+            print(f"❌ Ошибка polling: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def check_and_send_reminders(self):
         """
@@ -257,7 +422,16 @@ class ReminderScheduler:
         if self.is_running:
             return
         
-        # Проверяем записи каждые 5 минут
+        # POLLING: Проверяем записи каждые 2 минуты (замена webhook)
+        self.scheduler.add_job(
+            self.poll_records,
+            trigger=IntervalTrigger(minutes=2),
+            id="poll_records",
+            name="Polling записей",
+            replace_existing=True
+        )
+        
+        # Проверяем записи каждые 5 минут (напоминания)
         self.scheduler.add_job(
             self.check_and_send_reminders,
             trigger=IntervalTrigger(minutes=5),
@@ -275,7 +449,7 @@ class ReminderScheduler:
             replace_existing=True
         )
         
-        # Проверяем потерянных клиентов раз в день в 10:00
+        # Проверяем потерянных клиентов раз в день
         self.scheduler.add_job(
             self.check_lost_clients,
             trigger=IntervalTrigger(hours=24),
@@ -286,7 +460,7 @@ class ReminderScheduler:
         
         self.scheduler.start()
         self.is_running = True
-        print("⏰ Планировщик напоминаний запущен")
+        print("⏰ Планировщик запущен (polling каждые 2 мин)")
     
     def stop(self):
         """Остановка планировщика"""
@@ -300,6 +474,11 @@ class ReminderScheduler:
     async def run_once(self):
         """Однократная проверка (для отладки)"""
         await self.check_and_send_reminders()
+    
+    async def initial_sync(self):
+        """Первичная синхронизация записей при старте"""
+        print("🔄 Первичная синхронизация записей...")
+        await self.poll_records()
 
 
 # Синглтон

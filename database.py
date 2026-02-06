@@ -223,6 +223,80 @@ class Database:
                 (record_id, telegram_user_id)
             )
             await db.commit()
+    
+    async def init_records_tracking(self):
+        """Инициализация таблицы для отслеживания записей (polling)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS known_records (
+                    id INTEGER PRIMARY KEY,
+                    record_id INTEGER UNIQUE NOT NULL,
+                    client_phone TEXT,
+                    client_name TEXT,
+                    service_name TEXT,
+                    staff_name TEXT,
+                    record_date TEXT,
+                    record_time TEXT,
+                    status TEXT DEFAULT 'active',
+                    hash TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await db.commit()
+    
+    async def get_known_record(self, record_id: int) -> Optional[dict]:
+        """Получить известную запись"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM known_records WHERE record_id = ?",
+                (record_id,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+    
+    async def save_known_record(
+        self,
+        record_id: int,
+        client_phone: str,
+        client_name: str,
+        service_name: str,
+        staff_name: str,
+        record_date: str,
+        record_time: str,
+        record_hash: str,
+        status: str = "active"
+    ):
+        """Сохранить известную запись"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO known_records 
+                   (record_id, client_phone, client_name, service_name, staff_name, 
+                    record_date, record_time, hash, status, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (record_id, client_phone, client_name, service_name, staff_name,
+                 record_date, record_time, record_hash, status, datetime.now())
+            )
+            await db.commit()
+    
+    async def get_all_active_record_ids(self) -> set:
+        """Получить все ID активных записей"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT record_id FROM known_records WHERE status = 'active'"
+            )
+            rows = await cursor.fetchall()
+            return {row[0] for row in rows}
+    
+    async def mark_record_deleted(self, record_id: int):
+        """Отметить запись как удалённую"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE known_records SET status = 'deleted', updated_at = ? WHERE record_id = ?",
+                (datetime.now(), record_id)
+            )
+            await db.commit()
 
 
 # Синглтон
