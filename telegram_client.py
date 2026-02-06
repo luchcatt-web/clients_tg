@@ -93,19 +93,22 @@ class TelegramClient:
             from pyrogram.raw.functions.contacts import ImportContacts
             from pyrogram.raw.types import InputPhoneContact
             
+            print(f"📥 Импортируем контакт: {normalized}")
+            
             result = await self.app.invoke(
                 ImportContacts(
                     contacts=[InputPhoneContact(
                         client_id=0,
                         phone=normalized,
-                        first_name="Client",
-                        last_name=""
+                        first_name="Клиент",
+                        last_name="YClients"
                     )]
                 )
             )
             
             if result.users:
                 user = result.users[0]
+                print(f"✅ Контакт импортирован: {user.first_name} (ID: {user.id})")
                 return {
                     "user_id": user.id,
                     "username": user.username,
@@ -113,6 +116,8 @@ class TelegramClient:
                     "last_name": user.last_name,
                     "phone": normalized
                 }
+            else:
+                print(f"⚠️ Пользователь с номером {normalized} не зарегистрирован в Telegram или скрыл номер")
             
             return None
             
