@@ -138,12 +138,25 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     
     # Парсим дату
     date_str = record.get("date", "")
-    time_str = record.get("datetime", "").split(" ")[-1] if record.get("datetime") else "00:00:00"
+    datetime_field = record.get("datetime", "")
+    
+    # YClients может возвращать datetime в формате "YYYY-MM-DD HH:MM:SS" или просто "HH:MM:SS"
+    if datetime_field and " " in str(datetime_field):
+        time_str = str(datetime_field).split(" ")[-1]
+    else:
+        time_str = str(datetime_field) if datetime_field else "00:00:00"
+    
+    print(f"📅 Парсинг даты: date={date_str}, datetime={datetime_field}, time_str={time_str}")
     
     try:
         record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
     except ValueError:
-        record_datetime = datetime.now()
+        try:
+            # Попробуем без секунд
+            record_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            record_datetime = datetime.now()
+            print(f"⚠️ Не удалось распарсить дату, используем текущее время")
     
     # === НОВАЯ ЗАПИСЬ ===
     if status == "create":
