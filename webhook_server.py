@@ -1,38 +1,152 @@
 """
 Webhook сервер для получения событий из YClients
 Позволяет реагировать на новые записи, отмены и изменения в реальном времени
++ Scheduler для напоминаний за 24ч и 1ч
 """
 import hashlib
 import hmac
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import config
 from database import db
 from telegram_client import telegram
 from yclients_api import yclients
-from templates import msg_booking_created, msg_booking_changed, msg_booking_cancelled
+from templates import (
+    msg_booking_created, msg_booking_changed, msg_booking_cancelled,
+    msg_confirmation_24h, msg_reminder_1h
+)
 from bot_checker import get_bot_client_chat_id, send_via_bot
 
 
 app = FastAPI(title="YClients Telegram Integration", version="1.0.0")
 
+# Scheduler для напоминаний
+scheduler = AsyncIOScheduler()
 
-# === Инициализация Telegram при старте ===
+
+# === Инициализация Telegram и Scheduler при старте ===
 @app.on_event("startup")
 async def startup_event():
-    """Запуск Telegram клиента при старте сервера"""
+    """Запуск Telegram клиента и scheduler при старте сервера"""
     await db.init()
+    await db.init_records_tracking()
     await telegram.start()
+    
+    # Запускаем scheduler для напоминаний
+    scheduler.add_job(check_reminders, 'interval', minutes=5, id='check_reminders')
+    scheduler.start()
+    
     print("✅ Telegram клиент запущен!")
+    print("✅ Scheduler напоминаний запущен (проверка каждые 5 минут)")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Остановка Telegram клиента"""
+    """Остановка Telegram клиента и scheduler"""
+    scheduler.shutdown()
     await telegram.stop()
+
+
+async def check_reminders():
+    """Проверка и отправка напоминаний за 24ч и 1ч"""
+    try:
+        now = datetime.now()
+        print(f"⏰ Проверка напоминаний: {now.strftime('%H:%M')}")
+        
+        # Получаем все активные записи из БД
+        import aiosqlite
+        async with aiosqlite.connect(config.DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute(
+                "SELECT * FROM known_records WHERE status = 'active'"
+            )
+            records = await cursor.fetchall()
+        
+        for record in records:
+            record_id = record["record_id"]
+            client_phone = record["client_phone"]
+            client_name = record["client_name"]
+            service_name = record["service_name"]
+            staff_name = record["staff_name"]
+            record_date = record["record_date"]
+            record_time = record["record_time"]
+            
+            if not client_phone:
+                continue
+            
+            # Парсим дату записи
+            try:
+                record_datetime = datetime.strptime(f"{record_date} {record_time}", "%Y-%m-%d %H:%M:%S")
+            except:
+                try:
+                    record_datetime = datetime.strptime(f"{record_date} {record_time}", "%Y-%m-%d %H:%M")
+                except:
+                    continue
+            
+            # Пропускаем прошедшие записи
+            if record_datetime < now:
+                continue
+            
+            time_until = record_datetime - now
+            hours_until = time_until.total_seconds() / 3600
+            
+            # === Напоминание за 24 часа ===
+            if 23 <= hours_until <= 25:
+                if not await db.is_reminder_sent(record_id, "24h"):
+                    print(f"📤 Напоминание 24ч: {client_name} ({record_id})")
+                    
+                    # Проверяем, есть ли клиент в боте
+                    bot_chat_id = await get_bot_client_chat_id(client_phone)
+                    
+                    if not bot_chat_id:
+                        # Клиент НЕ в боте — отправляем через userbot
+                        text = msg_confirmation_24h(client_name, service_name, staff_name, record_datetime)
+                        result = await telegram.send_message(
+                            phone_or_user_id=client_phone,
+                            text=text,
+                            record_id=record_id
+                        )
+                        if result:
+                            await db.mark_reminder_sent(record_id, "24h", result.id if hasattr(result, 'id') else None)
+                            print(f"   ✅ Отправлено через userbot")
+                    else:
+                        print(f"   ℹ️ Клиент в боте — бот отправит напоминание")
+                        await db.mark_reminder_sent(record_id, "24h")
+            
+            # === Напоминание за 1 час ===
+            elif 0.5 <= hours_until <= 1.5:
+                if not await db.is_reminder_sent(record_id, "1h"):
+                    print(f"📤 Напоминание 1ч: {client_name} ({record_id})")
+                    
+                    # Проверяем, есть ли клиент в боте
+                    bot_chat_id = await get_bot_client_chat_id(client_phone)
+                    
+                    if not bot_chat_id:
+                        # Клиент НЕ в боте — отправляем через userbot
+                        text = msg_reminder_1h(client_name, service_name, staff_name, record_datetime)
+                        result = await telegram.send_message(
+                            phone_or_user_id=client_phone,
+                            text=text,
+                            record_id=record_id
+                        )
+                        if result:
+                            await db.mark_reminder_sent(record_id, "1h", result.id if hasattr(result, 'id') else None)
+                            print(f"   ✅ Отправлено через userbot")
+                    else:
+                        print(f"   ℹ️ Клиент в боте — бот отправит напоминание")
+                        await db.mark_reminder_sent(record_id, "1h")
+        
+        print(f"   Проверено записей: {len(records)}")
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ Ошибка проверки напоминаний: {e}")
+        traceback.print_exc()
 
 
 def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
@@ -163,6 +277,20 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     if status == "create":
         print(f"📝 Новая запись #{record_id}: {client_name}, тел: {client_phone}")
         
+        # Сохраняем запись в БД для напоминаний
+        await db.save_known_record(
+            record_id=record_id,
+            client_phone=client_phone,
+            client_name=client_name,
+            service_name=service_name,
+            staff_name=staff_name,
+            record_date=record_datetime.strftime("%Y-%m-%d"),
+            record_time=record_datetime.strftime("%H:%M:%S"),
+            record_hash="",
+            status="active"
+        )
+        print(f"   💾 Запись сохранена в БД для напоминаний")
+        
         text = msg_booking_created(client_name, service_name, staff_name, record_datetime)
         
         # Проверяем, есть ли клиент в боте
@@ -196,6 +324,10 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     elif status == "delete" or record.get("deleted"):
         print(f"❌ Запись #{record_id} отменена: {client_name}, тел: {client_phone}")
         
+        # Удаляем запись из БД напоминаний
+        await db.mark_record_deleted(record_id)
+        print(f"   💾 Запись удалена из БД напоминаний")
+        
         text = msg_booking_cancelled(client_name, service_name, record_datetime)
         
         # Проверяем, есть ли клиент в боте
@@ -217,6 +349,20 @@ async def handle_record_event(status: str, record_id: int, data: dict):
     # === ЗАПИСЬ ИЗМЕНЕНА ===
     elif status == "update":
         print(f"📝 Запись #{record_id} изменена: {client_name}, тел: {client_phone}")
+        
+        # Обновляем запись в БД для напоминаний
+        await db.save_known_record(
+            record_id=record_id,
+            client_phone=client_phone,
+            client_name=client_name,
+            service_name=service_name,
+            staff_name=staff_name,
+            record_date=record_datetime.strftime("%Y-%m-%d"),
+            record_time=record_datetime.strftime("%H:%M:%S"),
+            record_hash="",
+            status="active"
+        )
+        print(f"   💾 Запись обновлена в БД для напоминаний")
         
         text = msg_booking_changed(client_name, service_name, staff_name, record_datetime)
         
