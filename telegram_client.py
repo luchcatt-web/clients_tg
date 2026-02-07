@@ -128,8 +128,26 @@ class TelegramClient:
                             "phone": normalized
                         }
                 except Exception as e:
-                    print(f"   Формат {phone_format}: не найден")
+                    print(f"   Формат {phone_format}: ошибка {e}")
                     continue
+            
+            # Последняя попытка — ищем через resolve_phone (Telegram Premium feature)
+            try:
+                from pyrogram.raw.functions.contacts import ResolvePhone
+                print(f"📱 Пробуем ResolvePhone: {normalized}")
+                result = await self.app.invoke(ResolvePhone(phone=normalized))
+                if result.users:
+                    user = result.users[0]
+                    print(f"✅ Найден через ResolvePhone: {user.first_name} (ID: {user.id})")
+                    return {
+                        "user_id": user.id,
+                        "username": getattr(user, 'username', None),
+                        "first_name": getattr(user, 'first_name', ''),
+                        "last_name": getattr(user, 'last_name', ''),
+                        "phone": normalized
+                    }
+            except Exception as e:
+                print(f"   ResolvePhone: {e}")
             
             print(f"⚠️ Пользователь с номером {normalized} не найден ни в одном формате")
             return None
