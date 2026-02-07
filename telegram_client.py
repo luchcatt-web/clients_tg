@@ -89,36 +89,49 @@ class TelegramClient:
                             "phone": contact.phone_number
                         }
             
-            # Если не нашли в контактах, пробуем импортировать
+            # Если не нашли в контактах, пробуем импортировать с разными форматами
             from pyrogram.raw.functions.contacts import ImportContacts
             from pyrogram.raw.types import InputPhoneContact
             
-            print(f"📥 Импортируем контакт: {normalized}")
+            # Пробуем разные форматы номера
+            digits = normalized.replace("+", "")
+            phone_formats = [
+                normalized,           # +79532781888
+                digits,               # 79532781888
+                "8" + digits[1:],     # 89532781888
+                digits[-10:],         # 9532781888 (без кода страны)
+            ]
             
-            result = await self.app.invoke(
-                ImportContacts(
-                    contacts=[InputPhoneContact(
-                        client_id=0,
-                        phone=normalized,
-                        first_name="Клиент",
-                        last_name="YClients"
-                    )]
-                )
-            )
+            for phone_format in phone_formats:
+                print(f"📥 Импортируем контакт: {phone_format}")
+                
+                try:
+                    result = await self.app.invoke(
+                        ImportContacts(
+                            contacts=[InputPhoneContact(
+                                client_id=0,
+                                phone=phone_format,
+                                first_name="Клиент",
+                                last_name="YClients"
+                            )]
+                        )
+                    )
+                    
+                    if result.users:
+                        user = result.users[0]
+                        print(f"✅ Контакт импортирован: {user.first_name} (ID: {user.id})")
+                        return {
+                            "user_id": user.id,
+                            "username": user.username,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "phone": normalized
+                        }
+                except Exception as e:
+                    print(f"   Формат {phone_format}: не найден")
+                    continue
             
-            if result.users:
-                user = result.users[0]
-                print(f"✅ Контакт импортирован: {user.first_name} (ID: {user.id})")
-                return {
-                    "user_id": user.id,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "phone": normalized
-                }
-            else:
-                print(f"⚠️ Пользователь с номером {normalized} не зарегистрирован в Telegram или скрыл номер")
-            
+            print(f"⚠️ Пользователь с номером {normalized} не найден ни в одном формате")
             return None
             
         except Exception as e:
